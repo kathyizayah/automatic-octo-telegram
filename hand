@@ -1,0 +1,53 @@
+/// <summary>
+/// An extremely lightweight implementation of async mutexes
+/// </summary>
+public sealed class AsyncMutex{
+        private readonly object locker = new object();
+        private volatile int locked;
+        private readonly Queue<Action<bool>> queue = new Queue<Action<bool>>();
+
+        public bool TryEnter() => Interlocked.Exchange(ref locked, 1) == 0;
+
+        /// <summary>
+        /// Returns a task that completes once we have entered the lock
+        /// </summary>
+        public Task Enter(){
+                //If the lock is available, we return on the spot
+                if(TryEnter()){
+                        return Misc.completed;
+                } else{
+                        TaskCompletionSource<bool> taskCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.None);
+                        lock (locker)
+                        {
+                                if (locked == 0)
+                                {
+                                        //It's very unlikely for us to get here
+                                        locked = 1;
+                                        return Misc.completed;
+                                }
+                                else
+                                {
+                                        //Add us to the queue of awaiters
+                                        queue.Enqueue(taskCompletionSource.SetResult);
+                                        return taskCompletionSource.Task;
+                                }
+                        }
+                }
+        }
+
+        public void Exit(){
+                lock(locker){
+                        if(locked == 0){
+                                throw new InvalidOperationException("Mutex already unlocked");
+                        } else{
+                                if(queue.TryDequeue(out Action<bool> next)){
+                                        //Hand over lock
+                                        next(false);
+                                } else{
+                                        //Release lock
+                                        locked = 0;
+                                }
+                        }
+                }
+        }
+}
